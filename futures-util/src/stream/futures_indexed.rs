@@ -1,4 +1,5 @@
 use std::cmp::{Eq, PartialEq, PartialOrd, Ord, Ordering};
+use std::ops::AddAssign;
 use std::collections::BinaryHeap;
 use std::fmt::{self, Debug};
 use std::iter::FromIterator;
@@ -10,23 +11,20 @@ use stream::FuturesUnordered;
 
 #[must_use = "futures do nothing unless polled"]
 #[derive(Debug)]
-struct OrderWrapper<T, Idx> {
-    item: T,
+struct OrderWrapper<Idx, T> {
     index: Idx,
+    item: T,
 }
 
-impl<T, Idx> PartialEq for OrderWrapper<T, Idx>
-where
-    Idx: PartialEq,
-{
+impl<Idx: PartialEq, T> PartialEq for OrderWrapper<Idx, T> {
     fn eq(&self, other: &Self) -> bool {
         self.index == other.index
     }
 }
 
-impl<T, Idx> Eq for OrderWrapper<T, Idx> {}
+impl<Idx: PartialEq, T> Eq for OrderWrapper<Idx, T> {}
 
-impl<T, Idx> PartialOrd for OrderWrapper<T, Idx>
+impl<Idx, T> PartialOrd for OrderWrapper<Idx, T>
 where
     Idx: PartialOrd + Ord,
 {
@@ -35,7 +33,7 @@ where
     }
 }
 
-impl<T, Idx> Ord for OrderWrapper<T, Idx>
+impl<Idx, T> Ord for OrderWrapper<Idx, T>
 where
     Idx: Ord,
 {
@@ -45,7 +43,7 @@ where
     }
 }
 
-impl<T, Idx> Future for OrderWrapper<T, Idx>
+impl<Idx, T> Future for OrderWrapper<Idx, T>
 where
     T: Future,
 {
@@ -91,16 +89,15 @@ where
 /// some of the later futures have already completed.
 ///
 /// Note that you can create a ready-made `FuturesIndexed` via the
-/// `futures_ordered` function in the `stream` module, or you can start with an
+/// `futures_indexed` function in the `stream` module, or you can start with an
 /// empty queue with the `FuturesIndexed::new` constructor.
 #[must_use = "streams do nothing unless polled"]
-pub struct FuturesIndexed<T, Idx>
+pub struct FuturesIndexed<Idx, T>
 where
     T: Future,
 {
-    in_progress: FuturesUnordered<OrderWrapper<T, Idx>>,
+    in_progress: FuturesUnordered<OrderWrapper<Idx, T>>,
     queued_results: BinaryHeap<OrderWrapper<T::Item, Idx>>,
-    // next_incoming_index: usize,
     next_outgoing_index: Idx,
 }
 
@@ -115,21 +112,15 @@ where
 ///
 /// Note that the returned queue can also be used to dynamically push more
 /// futures into the queue as they become available.
-pub fn futures_ordered<I>(futures: I) -> FuturesIndexed<<I::Item as IntoFuture>::Future, usize>
+pub fn futures_indexed<I>(futures: I) -> FuturesIndexed<<I::Item as IntoFuture>::Future, usize>
 where
     I: IntoIterator,
     I::Item: IntoFuture,
 {
-    let mut queue = FuturesIndexed::new();
-
-    for (index, future) in futures.into_iter().enumerate() {
-        queue.push(index, future.into_future());
-    }
-
-    queue
+    futures.into_iter().map(|f| f.into_future()).collect()
 }
 
-impl<T, Idx> FuturesIndexed<T, Idx>
+impl<Idx, T> FuturesIndexed<Idx, T>
 where
     T: Future,
     Idx: Ord + Default,
@@ -138,11 +129,10 @@ where
     ///
     /// The returned `FuturesIndexed` does not contain any futures and, in this
     /// state, `FuturesIndexed::poll` will return `Ok(Async::Ready(None))`.
-    pub fn new() -> FuturesIndexed<T, Idx> {
+    pub fn new() -> FuturesIndexed<Idx, T> {
         FuturesIndexed {
             in_progress: FuturesUnordered::new(),
             queued_results: BinaryHeap::new(),
-            // next_incoming_index: 0,
             next_outgoing_index: Idx::default(),
         }
     }
@@ -176,7 +166,7 @@ where
     }
 }
 
-impl<T, Idx> Stream for FuturesIndexed<T, Idx>
+impl<Idx, T> Stream for FuturesIndexed<Idx, T>
 where
     T: Future,
     Idx: Ord + AddAssign,
@@ -210,7 +200,7 @@ where
     }
 }
 
-impl<T, Idx> Debug for FuturesIndexed<T, Idx>
+impl<Idx, T> Debug for FuturesIndexed<Idx, T>
 where
     T: Future + Debug,
     Idx: Debug,
@@ -221,14 +211,17 @@ where
     }
 }
 
-impl<F: Future> FromIterator<F> for FuturesIndexed<F> {
+impl<F: Future> FromIterator<F> for FuturesIndexed<F, usize> {
     fn from_iter<T>(iter: T) -> Self
-        where T: IntoIterator<Item = F>
+    where
+        T: IntoIterator<Item = F>,
     {
-        let mut new = FuturesIndexed::new();
-        for future in iter.into_iter() {
-            new.push(future);
-        }
-        new
+        let acc = FuturesIndexed::new();
+        iter.into_iter()
+            .enumerate()
+            .fold(acc, |mut acc, (index, item)| {
+                acc.push(index, item);
+                acc
+            })
     }
 }

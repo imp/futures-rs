@@ -26,7 +26,7 @@ impl<Idx: PartialEq, T> Eq for OrderWrapper<Idx, T> {}
 
 impl<Idx, T> PartialOrd for OrderWrapper<Idx, T>
 where
-    Idx: PartialOrd + Ord,
+    Idx: Ord,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -45,16 +45,17 @@ where
 
 impl<Idx, T> Future for OrderWrapper<Idx, T>
 where
+    Idx: Copy + Ord,
     T: Future,
 {
-    type Item = OrderWrapper<T::Item, Idx>;
+    type Item = OrderWrapper<Idx, T::Item>;
     type Error = T::Error;
 
     fn poll(&mut self, cx: &mut task::Context) -> Poll<Self::Item, Self::Error> {
         let result = try_ready!(self.item.poll(cx));
         Ok(Async::Ready(OrderWrapper {
+            index: self.index,
             item: result,
-            index: self.index
         }))
     }
 }
@@ -94,10 +95,11 @@ where
 #[must_use = "streams do nothing unless polled"]
 pub struct FuturesIndexed<Idx, T>
 where
+    Idx: Ord,
     T: Future,
 {
     in_progress: FuturesUnordered<OrderWrapper<Idx, T>>,
-    queued_results: BinaryHeap<OrderWrapper<T::Item, Idx>>,
+    queued_results: BinaryHeap<OrderWrapper<Idx, T::Item>>,
     next_outgoing_index: Idx,
 }
 
@@ -112,7 +114,7 @@ where
 ///
 /// Note that the returned queue can also be used to dynamically push more
 /// futures into the queue as they become available.
-pub fn futures_indexed<I>(futures: I) -> FuturesIndexed<<I::Item as IntoFuture>::Future, usize>
+pub fn futures_indexed<I>(futures: I) -> FuturesIndexed<usize, <I::Item as IntoFuture>::Future>
 where
     I: IntoIterator,
     I::Item: IntoFuture,
@@ -122,8 +124,8 @@ where
 
 impl<Idx, T> FuturesIndexed<Idx, T>
 where
+    Idx: Copy + Default + Ord,
     T: Future,
-    Idx: Ord + Default,
 {
     /// Constructs a new, empty `FuturesIndexed`
     ///
@@ -168,8 +170,8 @@ where
 
 impl<Idx, T> Stream for FuturesIndexed<Idx, T>
 where
+    Idx: Ord + AddAssign<usize>,
     T: Future,
-    Idx: Ord + AddAssign,
 {
     type Item = T::Item;
     type Error = T::Error;
@@ -202,16 +204,15 @@ where
 
 impl<Idx, T> Debug for FuturesIndexed<Idx, T>
 where
+    Idx: Debug + Ord,
     T: Future + Debug,
-    Idx: Debug,
-
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "FuturesIndexed {{ ... }}")
     }
 }
 
-impl<F: Future> FromIterator<F> for FuturesIndexed<F, usize> {
+impl<F: Future> FromIterator<F> for FuturesIndexed<usize, F> {
     fn from_iter<T>(iter: T) -> Self
     where
         T: IntoIterator<Item = F>,

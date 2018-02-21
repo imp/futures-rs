@@ -95,7 +95,7 @@ where
 #[must_use = "streams do nothing unless polled"]
 pub struct FuturesIndexed<Idx, T>
 where
-    Idx: Ord,
+    Idx: Copy + Ord,
     T: Future,
 {
     in_progress: FuturesUnordered<OrderWrapper<Idx, T>>,
@@ -170,7 +170,7 @@ where
 
 impl<Idx, T> Stream for FuturesIndexed<Idx, T>
 where
-    Idx: Ord + AddAssign<usize>,
+    Idx: AddAssign<usize> + Copy + Ord,
     T: Future,
 {
     type Item = T::Item;
@@ -204,7 +204,7 @@ where
 
 impl<Idx, T> Debug for FuturesIndexed<Idx, T>
 where
-    Idx: Debug + Ord,
+    Idx: Copy + Debug + Ord,
     T: Future + Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
